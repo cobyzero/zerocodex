@@ -21,6 +21,9 @@ func (c *DeepSeekClient) Chat(
 		{Role: "user", Content: prompt},
 	}
 	tools := buildCodingTools()
+	needsWrite := promptRequestsFileWrite(prompt)
+	hasWritten := false
+	forcedWriteAttempt := false
 
 	for i := 0; i < maxToolIterations; i++ {
 		respMessage, err := c.doChatRequest(messages, tools)
@@ -30,10 +33,22 @@ func (c *DeepSeekClient) Chat(
 
 		messages = append(messages, respMessage)
 		if len(respMessage.ToolCalls) == 0 {
+			if needsWrite && !hasWritten && !forcedWriteAttempt {
+				forcedWriteAttempt = true
+				messages = append(messages, Message{
+					Role: "system",
+					Content: "The user requested file modifications, but no write was applied yet. " +
+						"You must call write_file now with the final full content of the target file(s).",
+				})
+				continue
+			}
 			return respMessage.Content, nil
 		}
 
-		invalidPathCount := c.executeToolCalls(&messages, respMessage.ToolCalls, readFunc, writeFunc)
+		invalidPathCount, writeOKCount := c.executeToolCalls(&messages, respMessage.ToolCalls, readFunc, writeFunc)
+		if writeOKCount > 0 {
+			hasWritten = true
+		}
 		if invalidPathCount > 0 {
 			messages = append(messages, Message{
 				Role: "system",
@@ -61,8 +76,9 @@ func (c *DeepSeekClient) executeToolCalls(
 	toolCalls []ToolCall,
 	readFunc func(string) string,
 	writeFunc func(path, content string) string,
-) int {
-	invalidPathCount := 0
+) (invalidPathCount, writeOKCount int) {
+	invalidPathCount = 0
+	writeOKCount = 0
 	for _, tc := range toolCalls {
 		var toolContent string
 
@@ -91,6 +107,9 @@ func (c *DeepSeekClient) executeToolCalls(
 			if strings.HasPrefix(toolContent, "INVALID_PATH:") {
 				invalidPathCount++
 			}
+			if strings.HasPrefix(toolContent, "WRITE_OK:") {
+				writeOKCount++
+			}
 
 		default:
 			toolContent = "Unsupported tool: " + tc.Function.Name
@@ -102,5 +121,20 @@ func (c *DeepSeekClient) executeToolCalls(
 			Content:    toolContent,
 		})
 	}
-	return invalidPathCount
+	return invalidPathCount, writeOKCount
+}
+
+func promptRequestsFileWrite(prompt string) bool {
+	p := strings.ToLower(prompt)
+	keywords := []string{
+		"modifica", "modificar", "actualiza", "actualizar", "edita", "editar",
+		"reescribe", "escribe", "documenta", "documentar", "crea", "crear",
+		"fix", "update", "edit", "modify", "rewrite", "write", "implement",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
 }
