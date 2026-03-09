@@ -76,3 +76,11 @@ func (p *ProjectFS) ReadFile(basePath, relPath string) (string, error) {
 	}
 	return string(content), nil
 }
+
+func (p *ProjectFS) WriteFile(basePath, relPath, content string) error {
+	fullPath := filepath.Join(basePath, relPath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(fullPath, []byte(content), 0o644)
+}

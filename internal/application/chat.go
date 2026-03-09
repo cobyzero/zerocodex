@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -39,42 +40,43 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 		}
 	}
 
-	return c.Client.Chat(context, prompt, func(file string) string {
-		if onTool != nil {
-			onTool("Reading file: " + file)
-		}
-		path, startLine, endLine := parseFileRange(file)
-		normalized := strings.ToLower(strings.TrimSpace(path))
-		if len(availableFiles) > 0 {
-			if _, ok := availableFiles[normalized]; !ok {
-				suggestions := suggestFilePaths(path, availableList, 8)
-				var b strings.Builder
-				b.WriteString("INVALID_PATH: ")
-				b.WriteString(path)
-				b.WriteString("\nThe requested file is not in this project index.")
-				if len(suggestions) > 0 {
-					b.WriteString("\nTry one of these existing paths:\n")
-					for _, s := range suggestions {
-						b.WriteString("- ")
-						b.WriteString(s)
-						b.WriteString("\n")
-					}
-				}
-				return b.String()
+	return c.Client.Chat(
+		context,
+		prompt,
+		func(file string) string {
+			if onTool != nil {
+				onTool("Reading file: " + file)
 			}
-			path = availableFiles[normalized]
-		}
+			path, startLine, endLine := parseFileRange(file)
+			resolvedPath, ok, invalidMessage := resolveExistingPath(path, availableFiles, availableList)
+			if !ok {
+				return invalidMessage
+			}
 
-		content, err := c.Repo.ReadFile(projectPath, path)
-		if err != nil {
-			return "Error reading file: " + err.Error()
-		}
-		if startLine > 0 && endLine >= startLine {
-			content = sliceLines(content, startLine, endLine)
-		}
-		content = trimWithNotice(content, maxToolReadChars, "\n...[truncated file content]")
-		return content
-	})
+			content, err := c.Repo.ReadFile(projectPath, resolvedPath)
+			if err != nil {
+				return "Error reading file: " + err.Error()
+			}
+			if startLine > 0 && endLine >= startLine {
+				content = sliceLines(content, startLine, endLine)
+			}
+			content = trimWithNotice(content, maxToolReadChars, "\n...[truncated file content]")
+			return content
+		},
+		func(path, content string) string {
+			if onTool != nil {
+				onTool("Writing file: " + path)
+			}
+			resolvedPath, ok, invalidMessage := resolveWritablePath(path, projectPath, availableFiles)
+			if !ok {
+				return invalidMessage
+			}
+			if err := c.Repo.WriteFile(projectPath, resolvedPath, content); err != nil {
+				return "WRITE_ERROR: " + err.Error()
+			}
+			return "WRITE_OK: " + resolvedPath
+		},
+	)
 }
 
 func parseFileRange(raw string) (path string, startLine, endLine int) {
@@ -161,4 +163,60 @@ func suggestFilePaths(requested string, available []string, limit int) []string 
 		out = append(out, c.path)
 	}
 	return out
+}
+
+func resolveExistingPath(path string, availableFiles map[string]string, availableList []string) (string, bool, string) {
+	normalized := strings.ToLower(strings.TrimSpace(path))
+	if len(availableFiles) > 0 {
+		if p, ok := availableFiles[normalized]; ok {
+			return p, true, ""
+		}
+	}
+
+	suggestions := suggestFilePaths(path, availableList, 8)
+	var b strings.Builder
+	b.WriteString("INVALID_PATH: ")
+	b.WriteString(path)
+	b.WriteString("\nThe requested file is not in this project index.")
+	if len(suggestions) > 0 {
+		b.WriteString("\nTry one of these existing paths:\n")
+		for _, s := range suggestions {
+			b.WriteString("- ")
+			b.WriteString(s)
+			b.WriteString("\n")
+		}
+	}
+	return "", false, b.String()
+}
+
+func resolveWritablePath(path, basePath string, availableFiles map[string]string) (string, bool, string) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", false, "INVALID_PATH: empty path"
+	}
+
+	if p, ok := availableFiles[strings.ToLower(trimmed)]; ok {
+		return p, true, ""
+	}
+
+	clean := filepath.Clean(trimmed)
+	if filepath.IsAbs(clean) {
+		return "", false, "INVALID_PATH: absolute paths are not allowed"
+	}
+	if strings.HasPrefix(clean, "..") || strings.Contains(clean, "../") {
+		return "", false, "INVALID_PATH: path traversal is not allowed"
+	}
+
+	full := filepath.Join(basePath, clean)
+	absBase, errBase := filepath.Abs(basePath)
+	absFull, errFull := filepath.Abs(full)
+	if errBase != nil || errFull != nil {
+		return "", false, "INVALID_PATH: unable to validate path"
+	}
+	if absFull != absBase && !strings.HasPrefix(absFull, absBase+string(os.PathSeparator)) {
+		return "", false, "INVALID_PATH: path is outside project root"
+	}
+
+	// Allow creating new files inside the selected project.
+	return clean, true, ""
 }

@@ -10,15 +10,17 @@ func buildSystemMessage(systemContext string) Message {
 			"- Read only files you need.\n" +
 			"- Start from high-value and candidate files before exploring broadly.\n" +
 			"- Prefer narrow ranges with path#Lstart-Lend.\n" +
+			"- When the user asks to modify files, call write_file with the full updated content.\n" +
 			"- Avoid reading full large files unless required.\n" +
 			"- If a tool response starts with INVALID_PATH, pick a valid file from the suggestions and continue.\n" +
+			"- If write_file returns WRITE_OK, continue only if additional edits are needed; otherwise answer done.\n" +
 			"- If the user asks to implement or fix, identify target files and exact modifications first.\n" +
 			"- Keep final answers concise and actionable.\n\n" +
 			"Project context:\n" + systemContext,
 	}
 }
 
-func buildReadFileTools() []Tool {
+func buildCodingTools() []Tool {
 	return []Tool{
 		{
 			Type: "function",
@@ -34,6 +36,27 @@ func buildReadFileTools() []Tool {
 						},
 					},
 					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "write_file",
+				Description: "Writes full file content to a relative path inside the selected project.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "Relative file path to write. Example: README.md",
+						},
+						"content": map[string]interface{}{
+							"type":        "string",
+							"description": "Full final content to write into the file.",
+						},
+					},
+					"required": []string{"path", "content"},
 				},
 			},
 		},

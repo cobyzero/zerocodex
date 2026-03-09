@@ -6,7 +6,12 @@ import (
 	"strings"
 )
 
-func (c *DeepSeekClient) Chat(systemContext, prompt string, readFunc func(string) string) (string, error) {
+func (c *DeepSeekClient) Chat(
+	systemContext,
+	prompt string,
+	readFunc func(string) string,
+	writeFunc func(path, content string) string,
+) (string, error) {
 	if c.APIKey == "" {
 		return "", fmt.Errorf("DEEPSEEK_API_KEY environment variable not set")
 	}
@@ -15,7 +20,7 @@ func (c *DeepSeekClient) Chat(systemContext, prompt string, readFunc func(string
 		buildSystemMessage(systemContext),
 		{Role: "user", Content: prompt},
 	}
-	tools := buildReadFileTools()
+	tools := buildCodingTools()
 
 	for i := 0; i < maxToolIterations; i++ {
 		respMessage, err := c.doChatRequest(messages, tools)
@@ -28,7 +33,7 @@ func (c *DeepSeekClient) Chat(systemContext, prompt string, readFunc func(string
 			return respMessage.Content, nil
 		}
 
-		invalidPathCount := c.executeToolCalls(&messages, respMessage.ToolCalls, readFunc)
+		invalidPathCount := c.executeToolCalls(&messages, respMessage.ToolCalls, readFunc, writeFunc)
 		if invalidPathCount > 0 {
 			messages = append(messages, Message{
 				Role: "system",
@@ -51,32 +56,50 @@ func (c *DeepSeekClient) Chat(systemContext, prompt string, readFunc func(string
 	return respMessage.Content, nil
 }
 
-func (c *DeepSeekClient) executeToolCalls(messages *[]Message, toolCalls []ToolCall, readFunc func(string) string) int {
+func (c *DeepSeekClient) executeToolCalls(
+	messages *[]Message,
+	toolCalls []ToolCall,
+	readFunc func(string) string,
+	writeFunc func(path, content string) string,
+) int {
 	invalidPathCount := 0
 	for _, tc := range toolCalls {
-		if tc.Function.Name != "read_file" {
-			continue
-		}
+		var toolContent string
 
-		var args map[string]string
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-			*messages = append(*messages, Message{
-				Role:       "tool",
-				ToolCallID: tc.ID,
-				Content:    "Error parsing arguments",
-			})
-			continue
-		}
+		switch tc.Function.Name {
+		case "read_file":
+			var args map[string]string
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				toolContent = "Error parsing arguments"
+				break
+			}
+			toolContent = readFunc(args["path"])
+			if strings.HasPrefix(toolContent, "INVALID_PATH:") {
+				invalidPathCount++
+			}
 
-		content := readFunc(args["path"])
-		if strings.HasPrefix(content, "INVALID_PATH:") {
-			invalidPathCount++
+		case "write_file":
+			var args struct {
+				Path    string `json:"path"`
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				toolContent = "Error parsing arguments"
+				break
+			}
+			toolContent = writeFunc(args.Path, args.Content)
+			if strings.HasPrefix(toolContent, "INVALID_PATH:") {
+				invalidPathCount++
+			}
+
+		default:
+			toolContent = "Unsupported tool: " + tc.Function.Name
 		}
 
 		*messages = append(*messages, Message{
 			Role:       "tool",
 			ToolCallID: tc.ID,
-			Content:    content,
+			Content:    toolContent,
 		})
 	}
 	return invalidPathCount

@@ -6,7 +6,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/cobyzero/zerocodex/internal/application"
@@ -20,15 +19,12 @@ func BuildWindow(
 	currentProject := ""
 	isRunning := false
 	var transcript strings.Builder
-
-	title := widget.NewLabelWithStyle("ZeroCodex Agent", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	subtitle := widget.NewLabel("Professional coding assistant for your project")
-	subtitle.Importance = widget.MediumImportance
+	savedProjects, _ := selectProject.ListSaved()
 
 	projectLabel := widget.NewLabel("No project selected")
 	projectLabel.Wrapping = fyne.TextWrapBreak
 
-	statusValue := widget.NewLabelWithStyle("Idle", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	statusValue := widget.NewLabel("Idle")
 	statusValue.Importance = widget.SuccessImportance
 
 	chatView := widget.NewRichTextFromMarkdown("_No conversation yet. Select a project and send a prompt._")
@@ -51,14 +47,14 @@ func BuildWindow(
 			return
 		}
 		if transcript.Len() > 0 {
-			transcript.WriteString("\n\n---\n\n")
+			transcript.WriteString("\n\n")
 		}
 		switch role {
 		case "user":
-			transcript.WriteString("### You\n")
+			transcript.WriteString("**You**\n")
 			transcript.WriteString("> " + content)
 		case "assistant":
-			transcript.WriteString("### ZeroCodex\n")
+			transcript.WriteString("**ZeroCodex**\n")
 			transcript.WriteString(content)
 		case "system":
 			transcript.WriteString("`System` " + content)
@@ -72,7 +68,49 @@ func BuildWindow(
 
 	prompt := widget.NewMultiLineEntry()
 	prompt.SetPlaceHolder("Describe your coding task...")
-	prompt.SetMinRowsVisible(3)
+	prompt.SetMinRowsVisible(2)
+
+	projectsList := widget.NewList(
+		func() int { return len(savedProjects) },
+		func() fyne.CanvasObject {
+			label := widget.NewLabel("")
+			label.Truncation = fyne.TextTruncateEllipsis
+			return label
+		},
+		func(i widget.ListItemID, obj fyne.CanvasObject) {
+			if i < 0 || i >= len(savedProjects) {
+				obj.(*widget.Label).SetText("")
+				return
+			}
+			obj.(*widget.Label).SetText(savedProjects[i])
+		},
+	)
+	projectsList.OnSelected = func(id widget.ListItemID) {
+		if isRunning {
+			return
+		}
+		if id < 0 || id >= len(savedProjects) {
+			return
+		}
+		path := savedProjects[id]
+		currentProject = path
+		projectLabel.SetText(path)
+		appendMessage("system", "Project selected: "+path)
+	}
+
+	refreshProjects := func(selectPath string) {
+		savedProjects, _ = selectProject.ListSaved()
+		projectsList.Refresh()
+		if strings.TrimSpace(selectPath) == "" {
+			return
+		}
+		for i, p := range savedProjects {
+			if p == selectPath {
+				projectsList.Select(i)
+				return
+			}
+		}
+	}
 
 	selectBtn := widget.NewButton("Select Project", func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
@@ -84,6 +122,7 @@ func BuildWindow(
 				currentProject = path
 				projectLabel.SetText(path)
 				appendMessage("system", "Project selected: "+path)
+				refreshProjects(path)
 			} else if err != nil {
 				dialog.ShowError(err, w)
 			}
@@ -105,7 +144,7 @@ func BuildWindow(
 		appendMessage("user", userPrompt)
 
 		isRunning = true
-		statusValue.SetText("Running")
+		statusValue.SetText("Running...")
 		statusValue.Importance = widget.WarningImportance
 		runBtn.Disable()
 		selectBtn.Disable()
@@ -122,6 +161,10 @@ func BuildWindow(
 				if err != nil {
 					appendMessage("error", err.Error())
 				} else {
+					changeMD := buildGitChangesMarkdown(projectPath)
+					if changeMD != "" {
+						response = response + "\n\n---\n\n" + changeMD
+					}
 					appendMessage("assistant", response)
 				}
 				isRunning = false
@@ -134,39 +177,37 @@ func BuildWindow(
 	}
 	runBtn.OnTapped = runAgent
 
-	clearBtn := widget.NewButtonWithIcon("Clear Chat", theme.DeleteIcon(), func() {
+	clearBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
 		transcript.Reset()
 		updateChat()
 	})
 	clearBtn.Importance = widget.LowImportance
 
-	header := container.NewVBox(
-		title,
-		subtitle,
+	sidebarTitle := widget.NewLabelWithStyle("Projects", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	sidebar := container.NewBorder(
+		container.NewVBox(sidebarTitle, selectBtn),
+		nil,
+		nil,
+		nil,
+		container.NewVScroll(projectsList),
 	)
 
-	projectCard := widget.NewCard("Workspace", "", projectLabel)
-	statusCard := widget.NewCard("Agent Status", "", statusValue)
-	leftPanel := container.NewVBox(
-		selectBtn,
-		projectCard,
-		statusCard,
-		widget.NewSeparator(),
-		widget.NewLabel("Guidance"),
-		widget.NewLabel("- Ask specific tasks for better answers."),
-		widget.NewLabel("- Include target files when possible."),
-		widget.NewLabel("- Keep prompts short and explicit."),
-		layout.NewSpacer(),
-		clearBtn,
+	topBar := container.NewBorder(
+		nil,
+		nil,
+		nil,
+		container.NewHBox(clearBtn, statusValue),
+		projectLabel,
 	)
 
-	chatCard := widget.NewCard("Conversation", "", chatScroll)
 	composer := container.NewBorder(nil, nil, nil, runBtn, prompt)
-	rightPanel := container.NewBorder(nil, composer, nil, nil, chatCard)
+	mainPane := container.NewBorder(topBar, composer, nil, nil, chatScroll)
+	split := container.NewHSplit(sidebar, mainPane)
+	split.SetOffset(0.26)
 
-	content := container.NewHSplit(leftPanel, rightPanel)
-	content.SetOffset(0.30)
-	layout := container.NewBorder(header, nil, nil, nil, content)
+	runBtn.Text = "Send"
+	runBtn.Icon = theme.MailSendIcon()
 
-	w.SetContent(layout)
+	w.SetContent(split)
+	refreshProjects("")
 }
