@@ -1,16 +1,12 @@
 package llm
 
-import (
-	"os"
-)
-
 type DeepSeekClient struct {
 	APIKey string
 }
 
-func NewDeepSeekClient() *DeepSeekClient {
+func NewDeepSeekClient(apiKey string) *DeepSeekClient {
 	return &DeepSeekClient{
-		APIKey: os.Getenv("DEEPSEEK_API_KEY"),
+		APIKey: apiKey,
 	}
 }
 

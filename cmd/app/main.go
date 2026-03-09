@@ -4,11 +4,17 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 	"github.com/cobyzero/zerocodex/internal/adapters/filesystem"
 	"github.com/cobyzero/zerocodex/internal/adapters/llm"
+	"github.com/cobyzero/zerocodex/internal/adapters/secrets"
 	"github.com/cobyzero/zerocodex/internal/adapters/storage"
 	"github.com/cobyzero/zerocodex/internal/adapters/ui"
 	"github.com/cobyzero/zerocodex/internal/application"
@@ -22,29 +28,14 @@ func main() {
 	}
 
 	a := app.NewWithID("com.cobyzero.zerocodex")
-	w := a.NewWindow("ZeroCodex - AI Coding Agent")
-
 	repo := &filesystem.ProjectFS{}
-	deepseekClient := llm.NewDeepSeekClient()
 	projectStore, err := newProjectStore()
 	if err != nil {
 		log.Printf("project store disabled: %v", err)
 	}
 
-	selectProject := &application.SelectProject{
-		Repo:  repo,
-		Store: projectStore,
-	}
-
-	chat := &application.Chat{
-		Repo:   repo,
-		Client: deepseekClient,
-	}
-
-	ui.BuildWindow(w, selectProject, chat)
-
-	w.Resize(fyne.NewSize(1180, 760))
-	w.ShowAndRun()
+	showAPIKeySetup(a, repo, projectStore)
+	a.Run()
 }
 
 func newProjectStore() (*storage.SQLiteProjectStore, error) {
@@ -54,4 +45,91 @@ func newProjectStore() (*storage.SQLiteProjectStore, error) {
 	}
 	dbPath := filepath.Join(configDir, "zerocodex", "projects.db")
 	return storage.NewSQLiteProjectStore(dbPath)
+}
+
+func showAPIKeySetup(a fyne.App, repo *filesystem.ProjectFS, projectStore *storage.SQLiteProjectStore) {
+	store := secrets.NewKeyringStore()
+	setupWindow := a.NewWindow("ZeroCodex Setup")
+	setupWindow.Resize(fyne.NewSize(560, 300))
+
+	title := widget.NewLabelWithStyle("Configura tu API key de DeepSeek", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	description := widget.NewLabel("Se guarda en el llavero seguro del sistema y se usara para esta sesion.")
+	description.Wrapping = fyne.TextWrapWord
+
+	apiKeyEntry := widget.NewPasswordEntry()
+	apiKeyEntry.SetPlaceHolder("sk-...")
+
+	if savedKey, err := store.LoadDeepSeekAPIKey(); err == nil && strings.TrimSpace(savedKey) != "" {
+		apiKeyEntry.SetText(savedKey)
+	}
+
+	openMain := func(apiKey string) {
+		mainWindow := a.NewWindow("ZeroCodex - AI Coding Agent")
+
+		selectProject := &application.SelectProject{
+			Repo:  repo,
+			Store: projectStore,
+		}
+
+		chat := &application.Chat{
+			Repo:   repo,
+			Client: llm.NewDeepSeekClient(apiKey),
+		}
+
+		ui.BuildWindow(mainWindow, selectProject, chat)
+		mainWindow.Resize(fyne.NewSize(1180, 760))
+		mainWindow.Show()
+		setupWindow.Close()
+	}
+
+	saveAndContinue := widget.NewButtonWithIcon("Guardar y continuar", theme.ConfirmIcon(), func() {
+		apiKey := strings.TrimSpace(apiKeyEntry.Text)
+		if apiKey == "" {
+			dialog.ShowError(errEmptyAPIKey(), setupWindow)
+			return
+		}
+
+		if err := store.SaveDeepSeekAPIKey(apiKey); err != nil {
+			dialog.ShowError(err, setupWindow)
+			return
+		}
+		openMain(apiKey)
+	})
+	saveAndContinue.Importance = widget.HighImportance
+
+	useEnvBtn := widget.NewButton("Usar DEEPSEEK_API_KEY del entorno", func() {
+		apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
+		if apiKey == "" {
+			dialog.ShowError(errEmptyEnvAPIKey(), setupWindow)
+			return
+		}
+		openMain(apiKey)
+	})
+
+	content := container.NewPadded(container.NewVBox(
+		title,
+		description,
+		widget.NewSeparator(),
+		widget.NewLabel("API Key"),
+		apiKeyEntry,
+		container.NewHBox(saveAndContinue, useEnvBtn),
+	))
+	setupWindow.SetContent(content)
+	setupWindow.Show()
+}
+
+func errEmptyAPIKey() error {
+	return &validationError{msg: "Ingresa una API key valida para continuar."}
+}
+
+func errEmptyEnvAPIKey() error {
+	return &validationError{msg: "No existe DEEPSEEK_API_KEY en el entorno."}
+}
+
+type validationError struct {
+	msg string
+}
+
+func (e *validationError) Error() string {
+	return e.msg
 }
