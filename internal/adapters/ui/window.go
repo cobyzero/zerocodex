@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"strconv"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -21,6 +22,7 @@ func BuildWindow(
 ) {
 	currentProject := ""
 	isRunning := false
+	isAnalyzing := false
 	var transcript strings.Builder
 	savedProjects, _ := selectProject.ListSaved()
 
@@ -30,6 +32,11 @@ func BuildWindow(
 
 	statusValue := widget.NewLabel("Listo")
 	statusValue.Importance = widget.SuccessImportance
+	analyzeLabel := widget.NewLabel("")
+	analyzeBar := widget.NewProgressBar()
+	analyzeBar.Min = 0
+	analyzeBar.Max = 1
+	analyzeBar.Hide()
 
 	chatView := widget.NewRichTextFromMarkdown("_Sin mensajes. Selecciona un proyecto y escribe tu solicitud._")
 	chatView.Wrapping = fyne.TextWrapWord
@@ -103,18 +110,6 @@ func BuildWindow(
 			obj.(*widget.Label).SetText(savedProjects[i])
 		},
 	)
-	projectsList.OnSelected = func(id widget.ListItemID) {
-		if isRunning {
-			return
-		}
-		if id < 0 || id >= len(savedProjects) {
-			return
-		}
-		path := savedProjects[id]
-		currentProject = path
-		projectLabel.SetText(path)
-		appendMessage("system", "Proyecto seleccionado: "+path)
-	}
 
 	refreshProjects := func(selectPath string) {
 		savedProjects, _ = selectProject.ListSaved()
@@ -130,17 +125,85 @@ func BuildWindow(
 		}
 	}
 
-	selectBtn := widget.NewButton("Select Project", func() {
+	var runBtn *widget.Button
+	var selectBtn *widget.Button
+
+	updateRunState := func() {
+		canRun := !isRunning && !isAnalyzing && strings.TrimSpace(currentProject) != ""
+		if canRun {
+			runBtn.Enable()
+			return
+		}
+		runBtn.Disable()
+	}
+
+	startProjectAnalysis := func(path string) {
+		currentProject = path
+		projectLabel.SetText(path)
+		appendMessage("system", "Proyecto seleccionado: "+path)
+
+		isAnalyzing = true
+		statusValue.SetText("Analizando proyecto...")
+		statusValue.Importance = widget.WarningImportance
+		analyzeLabel.SetText("Analizando contexto del proyecto...")
+		analyzeBar.Max = 1
+		analyzeBar.SetValue(0)
+		analyzeBar.Show()
+		selectBtn.Disable()
+		updateRunState()
+
+		go func() {
+			err := chat.AnalyzeProject(path, func(done, total int) {
+				fyne.Do(func() {
+					if total <= 0 {
+						analyzeBar.Max = 1
+						analyzeBar.SetValue(0)
+						return
+					}
+					analyzeBar.Max = float64(total)
+					analyzeBar.SetValue(float64(done))
+					analyzeLabel.SetText("Analizando contexto del proyecto... (" + strconv.Itoa(done) + "/" + strconv.Itoa(total) + ")")
+				})
+			})
+
+			fyne.Do(func() {
+				isAnalyzing = false
+				analyzeLabel.SetText("")
+				analyzeBar.Hide()
+				if err != nil {
+					statusValue.SetText("Error de analisis")
+					statusValue.Importance = widget.DangerImportance
+					appendMessage("error", "Analisis de contexto fallido: "+err.Error())
+				} else {
+					statusValue.SetText("Listo")
+					statusValue.Importance = widget.SuccessImportance
+					appendMessage("system", "Analisis completado. Ya puedes consultar.")
+				}
+				selectBtn.Enable()
+				updateRunState()
+			})
+		}()
+	}
+
+	projectsList.OnSelected = func(id widget.ListItemID) {
+		if isRunning || isAnalyzing {
+			return
+		}
+		if id < 0 || id >= len(savedProjects) {
+			return
+		}
+		startProjectAnalysis(savedProjects[id])
+	}
+
+	selectBtn = widget.NewButton("Select Project", func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
 			if uri == nil {
 				return
 			}
 			path, err := selectProject.Execute(uri.Path())
 			if err == nil && path != "" {
-				currentProject = path
-				projectLabel.SetText(path)
-				appendMessage("system", "Proyecto seleccionado: "+path)
 				refreshProjects(path)
+				startProjectAnalysis(path)
 			} else if err != nil {
 				dialog.ShowError(err, w)
 			}
@@ -149,10 +212,10 @@ func BuildWindow(
 	selectBtn.Icon = theme.FolderOpenIcon()
 	selectBtn.Importance = widget.HighImportance
 
-	runBtn := widget.NewButtonWithIcon("Enviar", theme.MailSendIcon(), nil)
+	runBtn = widget.NewButtonWithIcon("Enviar", theme.MailSendIcon(), nil)
 	runBtn.Importance = widget.HighImportance
 	runAgent := func() {
-		if isRunning {
+		if isRunning || isAnalyzing {
 			return
 		}
 		userPrompt := strings.TrimSpace(prompt.Text)
@@ -166,8 +229,8 @@ func BuildWindow(
 		isRunning = true
 		statusValue.SetText("Procesando...")
 		statusValue.Importance = widget.WarningImportance
-		runBtn.Disable()
 		selectBtn.Disable()
+		updateRunState()
 
 		projectPath := currentProject
 		go func() {
@@ -188,10 +251,12 @@ func BuildWindow(
 					appendMessage("assistant", response)
 				}
 				isRunning = false
-				statusValue.SetText("Listo")
-				statusValue.Importance = widget.SuccessImportance
-				runBtn.Enable()
+				if !isAnalyzing {
+					statusValue.SetText("Listo")
+					statusValue.Importance = widget.SuccessImportance
+				}
 				selectBtn.Enable()
+				updateRunState()
 			})
 		}()
 	}
@@ -232,7 +297,7 @@ func BuildWindow(
 		nil,
 		topBarLeft,
 		container.NewHBox(clearBtn, layout.NewSpacer(), statusBadge),
-		nil,
+		container.NewVBox(analyzeLabel, analyzeBar),
 	)
 	topBar := container.NewPadded(glassPanel(topBarContent))
 
@@ -248,4 +313,5 @@ func BuildWindow(
 
 	w.SetContent(split)
 	refreshProjects("")
+	updateRunState()
 }

@@ -20,8 +20,19 @@ const (
 var lineRangePattern = regexp.MustCompile(`^(.*)#L(\d+)-L(\d+)$`)
 
 type Chat struct {
-	Repo   domain.ProjectRepository
-	Client domain.LLMClient
+	Repo         domain.ProjectRepository
+	Client       domain.LLMClient
+	ContextStore domain.FileContextStore
+}
+
+func (c *Chat) AnalyzeProject(projectPath string, onProgress func(done, total int)) error {
+	if strings.TrimSpace(projectPath) == "" || c.ContextStore == nil {
+		return nil
+	}
+	files := c.Repo.ListFiles(projectPath)
+	availableList := parseListedFiles(files)
+	_, err := c.refreshFileContextCache(projectPath, availableList, onProgress)
+	return err
 }
 
 func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string, error) {
@@ -30,14 +41,17 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 	availableList := []string{}
 	if projectPath != "" {
 		files := c.Repo.ListFiles(projectPath)
-		context = buildAgentContext(files, prompt)
-		context = trimWithNotice(context, maxContextChars, "\n...[truncated context]")
-
 		availableList = parseListedFiles(files)
 		availableFiles = make(map[string]string, len(availableList))
 		for _, p := range availableList {
 			availableFiles[strings.ToLower(strings.TrimSpace(p))] = p
 		}
+
+		context = buildAgentContext(files, prompt)
+		if cacheSection := c.buildCachedContextSection(projectPath, prompt, availableList); cacheSection != "" {
+			context = context + "\n\nCached file context (local, auto-maintained):\n" + cacheSection
+		}
+		context = trimWithNotice(context, maxContextChars, "\n...[truncated context]")
 	}
 
 	return c.Client.Chat(

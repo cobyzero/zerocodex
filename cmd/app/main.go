@@ -29,25 +29,53 @@ func main() {
 
 	a := app.NewWithID("com.cobyzero.zerocodex")
 	repo := &filesystem.ProjectFS{}
-	projectStore, err := newProjectStore()
+	dbPath, err := localDBPath()
+	if err != nil {
+		log.Printf("local db path unavailable: %v", err)
+	}
+
+	projectStore, err := newProjectStore(dbPath)
 	if err != nil {
 		log.Printf("project store disabled: %v", err)
 	}
 
-	showAPIKeySetup(a, repo, projectStore)
+	fileContextStore, err := newFileContextStore(dbPath)
+	if err != nil {
+		log.Printf("file context cache disabled: %v", err)
+	}
+
+	showAPIKeySetup(a, repo, projectStore, fileContextStore)
 	a.Run()
 }
 
-func newProjectStore() (*storage.SQLiteProjectStore, error) {
+func localDBPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	dbPath := filepath.Join(configDir, "zerocodex", "projects.db")
+	return filepath.Join(configDir, "zerocodex", "projects.db"), nil
+}
+
+func newProjectStore(dbPath string) (*storage.SQLiteProjectStore, error) {
+	if strings.TrimSpace(dbPath) == "" {
+		return nil, &validationError{msg: "invalid db path"}
+	}
 	return storage.NewSQLiteProjectStore(dbPath)
 }
 
-func showAPIKeySetup(a fyne.App, repo *filesystem.ProjectFS, projectStore *storage.SQLiteProjectStore) {
+func newFileContextStore(dbPath string) (*storage.SQLiteFileContextStore, error) {
+	if strings.TrimSpace(dbPath) == "" {
+		return nil, &validationError{msg: "invalid db path"}
+	}
+	return storage.NewSQLiteFileContextStore(dbPath)
+}
+
+func showAPIKeySetup(
+	a fyne.App,
+	repo *filesystem.ProjectFS,
+	projectStore *storage.SQLiteProjectStore,
+	fileContextStore *storage.SQLiteFileContextStore,
+) {
 	store := secrets.NewKeyringStore()
 	setupWindow := a.NewWindow("ZeroCodex Setup")
 	setupWindow.Resize(fyne.NewSize(560, 300))
@@ -72,8 +100,9 @@ func showAPIKeySetup(a fyne.App, repo *filesystem.ProjectFS, projectStore *stora
 		}
 
 		chat := &application.Chat{
-			Repo:   repo,
-			Client: llm.NewDeepSeekClient(apiKey),
+			Repo:         repo,
+			Client:       llm.NewDeepSeekClient(apiKey),
+			ContextStore: fileContextStore,
 		}
 
 		ui.BuildWindow(mainWindow, selectProject, chat)
