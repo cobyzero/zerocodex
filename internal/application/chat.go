@@ -25,7 +25,8 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 	var context string
 	if projectPath != "" {
 		files := c.Repo.ListFiles(projectPath)
-		context = trimWithNotice("Project Files:\n"+files, maxContextChars, "\n...[truncated file list]")
+		context = buildAgentContext(files, prompt)
+		context = trimWithNotice(context, maxContextChars, "\n...[truncated context]")
 	}
 
 	return c.Client.Chat(context, prompt, func(file string) string {

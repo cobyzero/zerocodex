@@ -70,9 +70,12 @@ func (c *DeepSeekClient) Chat(systemContext, prompt string, readFunc func(string
 			Role: "system",
 			Content: "You are an expert AI coding assistant. Minimize token usage.\n" +
 				"Rules:\n" +
+				"- Use the provided project type rules and candidate files to choose what to inspect.\n" +
 				"- Read only files you need.\n" +
+				"- Start from high-value and candidate files before exploring broadly.\n" +
 				"- Prefer narrow ranges with path#Lstart-Lend.\n" +
 				"- Avoid reading full large files unless required.\n" +
+				"- If the user asks to implement or fix, identify target files and exact modifications first.\n" +
 				"- Keep final answers concise and actionable.\n\n" +
 				"Project context:\n" + systemContext,
 		},
