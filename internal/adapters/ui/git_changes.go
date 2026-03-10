@@ -38,23 +38,48 @@ func buildGitChangesMarkdown(projectPath string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("**")
+	b.WriteString("## 📊 Cambios en Git\n\n")
+	
+	// Resumen con emojis y formato mejorado
+	b.WriteString("**📁 ")
 	b.WriteString(strconv.Itoa(len(changes)))
-	b.WriteString(" files changed** `+")
+	b.WriteString(" archivos modificados**\n\n")
+	
+	// Estadísticas con colores
+	b.WriteString("```diff\n")
+	b.WriteString("+")
 	b.WriteString(strconv.Itoa(totalAdded))
-	b.WriteString(" -")
+	b.WriteString(" líneas añadidas  |  -")
 	b.WriteString(strconv.Itoa(totalDeleted))
-	b.WriteString("`\n\n")
-
+	b.WriteString(" líneas eliminadas\n")
+	b.WriteString("```\n\n")
+	
+	// Lista de archivos con formato mejorado
+	b.WriteString("### Archivos modificados:\n\n")
 	for _, c := range changes {
-		b.WriteString("- `")
+		b.WriteString("• `")
 		b.WriteString(c.path)
-		b.WriteString("` `+")
+		b.WriteString("` ")
+		
+		// Iconos según el tipo de cambios
+		if c.added > 0 && c.deleted > 0 {
+			b.WriteString("🔄 ")
+		} else if c.added > 0 {
+			b.WriteString("➕ ")
+		} else if c.deleted > 0 {
+			b.WriteString("➖ ")
+		}
+		
+		b.WriteString("`+")
 		b.WriteString(strconv.Itoa(c.added))
 		b.WriteString(" -")
 		b.WriteString(strconv.Itoa(c.deleted))
 		b.WriteString("`\n")
 	}
+	
+	// Footer con información adicional
+	b.WriteString("\n---\n")
+	b.WriteString("*Los cambios mostrados incluyen tanto los staged como los unstaged.*")
 
 	return b.String()
 }

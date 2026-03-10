@@ -26,9 +26,21 @@ func BuildWindow(
 	var transcript strings.Builder
 	savedProjects, _ := selectProject.ListSaved()
 
+	// Colores modernos
+	primaryColor := color.NRGBA{R: 41, G: 98, B: 255, A: 255}
+	successColor := color.NRGBA{R: 46, G: 204, B: 113, A: 255}
+	warningColor := color.NRGBA{R: 241, G: 196, B: 15, A: 255}
+	dangerColor := color.NRGBA{R: 231, G: 76, B: 60, A: 255}
+	sidebarBg := color.NRGBA{R: 22, G: 25, B: 31, A: 240}
+	cardBg := color.NRGBA{R: 30, G: 33, B: 40, A: 230}
+	borderColor := color.NRGBA{R: 66, G: 75, B: 92, A: 180}
+	textPrimary := color.NRGBA{R: 240, G: 242, B: 245, A: 255}
+	textSecondary := color.NRGBA{R: 170, G: 175, B: 185, A: 255}
+
 	projectLabel := widget.NewLabel("Ningun proyecto seleccionado")
 	projectLabel.Wrapping = fyne.TextWrapBreak
 	projectLabel.TextStyle = fyne.TextStyle{Bold: true}
+	projectLabel.Importance = widget.MediumImportance
 
 	statusValue := widget.NewLabel("Listo")
 	statusValue.Importance = widget.SuccessImportance
@@ -80,19 +92,70 @@ func BuildWindow(
 	prompt := widget.NewMultiLineEntry()
 	prompt.SetPlaceHolder("Escribe lo que quieres cambiar en el proyecto...")
 	prompt.SetMinRowsVisible(2)
+	prompt.Wrapping = fyne.TextWrapWord
 
 	sectionTitle := func(icon fyne.Resource, title string) fyne.CanvasObject {
-		return container.NewHBox(
-			widget.NewIcon(icon),
-			widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		iconWidget := widget.NewIcon(icon)
+		titleWidget := widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		titleWidget.Importance = widget.HighImportance
+		return container.NewHBox(iconWidget, titleWidget)
+	}
+
+	roundedCard := func(content fyne.CanvasObject, bgColor color.Color) fyne.CanvasObject {
+		bg := canvas.NewRectangle(bgColor)
+		bg.StrokeColor = borderColor
+		bg.StrokeWidth = 1
+		bg.CornerRadius = 12
+		return container.NewStack(bg, container.NewPadded(content))
+	}
+
+	gradientCard := func(content fyne.CanvasObject) fyne.CanvasObject {
+		// Fondo con gradiente sutil
+		bg := canvas.NewRectangle(cardBg)
+		bg.StrokeColor = borderColor
+		bg.StrokeWidth = 1
+		bg.CornerRadius = 12
+		
+		// Efecto de brillo en la parte superior
+		highlight := canvas.NewRectangle(color.NRGBA{R: 255, G: 255, B: 255, A: 15})
+		highlight.CornerRadius = 12
+		highlight.SetMinSize(fyne.NewSize(0, 2))
+		
+		return container.NewStack(
+			bg,
+			highlight,
+			container.NewPadded(content),
 		)
 	}
 
-	glassPanel := func(content fyne.CanvasObject) fyne.CanvasObject {
-		bg := canvas.NewRectangle(color.NRGBA{R: 22, G: 25, B: 31, A: 210})
-		bg.StrokeColor = color.NRGBA{R: 66, G: 75, B: 92, A: 220}
+	statusBadge := func(text string, importance widget.Importance) fyne.CanvasObject {
+		badge := widget.NewLabel(text)
+		badge.Importance = importance
+		badge.TextStyle = fyne.TextStyle{Bold: true}
+		
+		bg := canvas.NewRectangle(color.Transparent)
+		bg.CornerRadius = 8
+		
+		switch importance {
+		case widget.SuccessImportance:
+			bg.FillColor = color.NRGBA{R: 46, G: 204, B: 113, A: 30}
+			bg.StrokeColor = successColor
+		case widget.WarningImportance:
+			bg.FillColor = color.NRGBA{R: 241, G: 196, B: 15, A: 30}
+			bg.StrokeColor = warningColor
+		case widget.DangerImportance:
+			bg.FillColor = color.NRGBA{R: 231, G: 76, B: 60, A: 30}
+			bg.StrokeColor = dangerColor
+		default:
+			bg.FillColor = color.NRGBA{R: 66, G: 75, B: 92, A: 30}
+			bg.StrokeColor = borderColor
+		}
 		bg.StrokeWidth = 1
-		return container.NewStack(bg, container.NewPadded(content))
+		
+		return container.NewStack(
+			bg,
+			container.NewPadded(badge),
+		)
 	}
 
 	projectsList := widget.NewList(
@@ -100,14 +163,15 @@ func BuildWindow(
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
 			label.Truncation = fyne.TextTruncateEllipsis
-			return label
+			label.Importance = widget.MediumImportance
+			return container.NewPadded(label)
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			if i < 0 || i >= len(savedProjects) {
-				obj.(*widget.Label).SetText("")
+				obj.(*container.Padded).Objects[0].(*widget.Label).SetText("")
 				return
 			}
-			obj.(*widget.Label).SetText(savedProjects[i])
+			obj.(*container.Padded).Objects[0].(*widget.Label).SetText(savedProjects[i])
 		},
 	)
 
@@ -132,9 +196,11 @@ func BuildWindow(
 		canRun := !isRunning && !isAnalyzing && strings.TrimSpace(currentProject) != ""
 		if canRun {
 			runBtn.Enable()
+			runBtn.Importance = widget.HighImportance
 			return
 		}
 		runBtn.Disable()
+		runBtn.Importance = widget.MediumImportance
 	}
 
 	startProjectAnalysis := func(path string) {
@@ -143,8 +209,6 @@ func BuildWindow(
 		appendMessage("system", "Proyecto seleccionado: "+path)
 
 		isAnalyzing = true
-		statusValue.SetText("Analizando proyecto...")
-		statusValue.Importance = widget.WarningImportance
 		analyzeLabel.SetText("Analizando contexto del proyecto...")
 		analyzeBar.Max = 1
 		analyzeBar.SetValue(0)
@@ -171,12 +235,8 @@ func BuildWindow(
 				analyzeLabel.SetText("")
 				analyzeBar.Hide()
 				if err != nil {
-					statusValue.SetText("Error de analisis")
-					statusValue.Importance = widget.DangerImportance
 					appendMessage("error", "Analisis de contexto fallido: "+err.Error())
 				} else {
-					statusValue.SetText("Listo")
-					statusValue.Importance = widget.SuccessImportance
 					appendMessage("system", "Analisis completado. Ya puedes consultar.")
 				}
 				selectBtn.Enable()
@@ -227,8 +287,6 @@ func BuildWindow(
 		appendMessage("user", userPrompt)
 
 		isRunning = true
-		statusValue.SetText("Procesando...")
-		statusValue.Importance = widget.WarningImportance
 		selectBtn.Disable()
 		updateRunState()
 
@@ -251,10 +309,6 @@ func BuildWindow(
 					appendMessage("assistant", response)
 				}
 				isRunning = false
-				if !isAnalyzing {
-					statusValue.SetText("Listo")
-					statusValue.Importance = widget.SuccessImportance
-				}
 				selectBtn.Enable()
 				updateRunState()
 			})
@@ -268,50 +322,102 @@ func BuildWindow(
 	})
 	clearBtn.Importance = widget.LowImportance
 
-	brandTitle := widget.NewLabelWithStyle("ZeroCodex", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	brandTitle := widget.NewLabelWithStyle("ZeroCodex", fyne.TextAlignLeading, fyne.TextStyle{Bold: true, Italic: true})
+	brandTitle.TextSize = 24
 	brandSub := widget.NewLabel("AI Coding Agent")
 	brandSub.Importance = widget.MediumImportance
+	brandSub.TextSize = 12
 
+	// Sidebar con fondo oscuro
+	sidebarBgRect := canvas.NewRectangle(sidebarBg)
+	sidebarBgRect.CornerRadius = 0
+	
 	sidebarContent := container.NewVBox(
-		container.NewPadded(container.NewHBox(widget.NewIcon(theme.ComputerIcon()), brandTitle)),
-		container.NewPadded(brandSub),
+		container.NewPadded(container.NewHBox(
+			widget.NewIcon(theme.ComputerIcon()),
+			container.NewVBox(brandTitle, brandSub),
+		)),
 		widget.NewSeparator(),
-		sectionTitle(theme.StorageIcon(), "Proyectos Recientes"),
+		container.NewPadded(sectionTitle(theme.StorageIcon(), "Proyectos Recientes")),
 		container.NewPadded(selectBtn),
-		container.NewPadded(container.NewVScroll(projectsList)),
+		container.NewPadded(roundedCard(
+			container.NewVScroll(projectsList),
+			color.NRGBA{R: 25, G: 28, B: 35, A: 200},
+		)),
 	)
-	sidebar := container.NewPadded(glassPanel(sidebarContent))
-
-	statusBadge := container.NewHBox(
-		widget.NewIcon(theme.ConfirmIcon()),
-		statusValue,
+	sidebar := container.NewStack(
+		sidebarBgRect,
+		container.NewPadded(sidebarContent),
 	)
 
-	topBarLeft := container.NewVBox(
+	// Top bar mejorada
+	projectSection := container.NewVBox(
 		sectionTitle(theme.FolderIcon(), "Proyecto Activo"),
-		projectLabel,
+		roundedCard(
+			container.NewPadded(projectLabel),
+			color.NRGBA{R: 25, G: 28, B: 35, A: 200},
+		),
+	)
+
+	statusSection := container.NewHBox(
+		widget.NewIcon(theme.ConfirmIcon()),
+		statusBadge("Listo", widget.SuccessImportance),
 	)
 
 	topBarContent := container.NewBorder(
 		nil,
 		nil,
-		topBarLeft,
-		container.NewHBox(clearBtn, layout.NewSpacer(), statusBadge),
-		container.NewVBox(analyzeLabel, analyzeBar),
+		projectSection,
+		container.NewHBox(
+			clearBtn,
+			layout.NewSpacer(),
+			statusSection,
+		),
+		container.NewVBox(
+			analyzeLabel,
+			analyzeBar,
+		),
 	)
-	topBar := container.NewPadded(glassPanel(topBarContent))
+	topBar := container.NewPadded(gradientCard(topBarContent))
 
+	// Chat area mejorada
 	chatHeader := container.NewPadded(sectionTitle(theme.MailSendIcon(), "Conversacion"))
-	chatArea := glassPanel(container.NewBorder(chatHeader, nil, nil, nil, container.NewPadded(chatScroll)))
+	chatArea := gradientCard(
+		container.NewBorder(
+			chatHeader,
+			nil,
+			nil,
+			nil,
+			container.NewPadded(chatScroll),
+		),
+	)
 
-	composerContent := container.NewBorder(nil, nil, nil, runBtn, prompt)
-	composer := container.NewPadded(glassPanel(composerContent))
+	// Composer mejorado
+	composerContent := container.NewBorder(
+		nil,
+		nil,
+		nil,
+		container.NewPadded(runBtn),
+		container.NewPadded(prompt),
+	)
+	composer := container.NewPadded(gradientCard(composerContent))
 
-	mainPane := container.NewBorder(topBar, composer, nil, nil, container.NewPadded(chatArea))
+	// Layout principal
+	mainPane := container.NewBorder(
+		topBar,
+		composer,
+		nil,
+		nil,
+		container.NewPadded(chatArea),
+	)
+	
 	split := container.NewHSplit(sidebar, mainPane)
 	split.SetOffset(0.25)
 
 	w.SetContent(split)
 	refreshProjects("")
 	updateRunState()
+	
+	// Aplicar tema oscuro por defecto
+	w.Canvas().SetTheme(theme.DarkTheme())
 }
