@@ -5,22 +5,26 @@ ZeroCodex es una aplicación de escritorio que utiliza inteligencia artificial p
 ## 🚀 Características Principales
 
 ### 🤖 Asistente de IA Integrado
+
 - **DeepSeek AI**: Integración con el modelo DeepSeek para análisis y generación de código
 - **Contexto inteligente**: Analiza automáticamente la estructura del proyecto
 - **Detección de tipo de proyecto**: Identifica Go, Flutter/Dart, Node.js, Python, Rust y más
 
 ### 📁 Gestión de Proyectos
+
 - **Selección de proyectos**: Interfaz gráfica para seleccionar carpetas de proyectos
 - **Persistencia**: Almacena proyectos recientes en base de datos SQLite
 - **Validación automática**: Detecta si una carpeta contiene un proyecto válido
 
 ### 🔧 Herramientas de Desarrollo
+
 - **Lectura de archivos**: Puede leer archivos específicos o rangos de líneas
 - **Escritura de archivos**: Modifica archivos existentes o crea nuevos
 - **Análisis de cambios**: Muestra diferencias de Git después de las modificaciones
 - **Sugerencias inteligentes**: Sugiere archivos relevantes basados en la solicitud
 
 ### 🎨 Interfaz de Usuario
+
 - **Aplicación de escritorio**: Construida con Fyne (Go)
 - **Chat interactivo**: Interfaz de conversación estilo chat
 - **Panel lateral**: Lista de proyectos recientes
@@ -83,12 +87,14 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
 ### Configuración
 
 1. **Clonar el repositorio**:
+
    ```bash
    git clone https://github.com/cobyzero/zerocodex.git
    cd zerocodex
    ```
 
 2. **Configurar API Key**:
+
    ```bash
    # Crear archivo .env o configurar variable de entorno
    echo "DEEPSEEK_API_KEY=tu_api_key_aqui" > .env
@@ -119,10 +125,10 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
 
 ### Variables de Entorno
 
-| Variable | Descripción | Requerido |
-|----------|-------------|-----------|
-| `DEEPSEEK_API_KEY` | API Key para DeepSeek AI | Sí |
-| `DEEPSEEK_BASE_URL` | URL base de la API (opcional) | No |
+| Variable            | Descripción                   | Requerido |
+| ------------------- | ----------------------------- | --------- |
+| `DEEPSEEK_API_KEY`  | API Key para DeepSeek AI      | Sí        |
+| `DEEPSEEK_BASE_URL` | URL base de la API (opcional) | No        |
 
 ### Almacenamiento
 
@@ -195,6 +201,12 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo LICENSE para más detal
 - **DeepSeek AI** por proporcionar la API de inteligencia artificial
 - **Fyne** por el excelente framework de UI para Go
 - **Comunidad Go** por las herramientas y bibliotecas de calidad
+
+## 🖼️ Imágenes de la Aplicación
+
+Aquí puedes ver capturas de pantalla de ZeroCodex en acción:
+
+![Interfaz principal de ZeroCodex](https://raw.githubusercontent.com/cobyzero/zerocodex/refs/heads/main/1.png)
 
 ## 🐛 Reportar Problemas
 
