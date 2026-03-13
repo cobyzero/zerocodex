@@ -25,7 +25,8 @@ ZeroCodex es una aplicación de escritorio que utiliza inteligencia artificial p
 
 ### 🎨 Interfaz de Usuario
 
-- **Aplicación de escritorio**: Construida con Fyne (Go)
+- **Aplicación de escritorio**: Construida con Wails
+- **Frontend moderno**: Interfaz en Svelte con HTML, CSS y JavaScript
 - **Chat interactivo**: Interfaz de conversación estilo chat
 - **Panel lateral**: Lista de proyectos recientes
 - **Estado en tiempo real**: Muestra el progreso de las operaciones
@@ -39,7 +40,7 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
 ```
 ┌─────────────────────────────────────────┐
 │           Interfaz de Usuario           │
-│          (internal/adapters/ui)         │
+│     (Wails + frontend Svelte/Vite)      │
 └─────────────────────────────────────────┘
                    │
 ┌─────────────────────────────────────────┐
@@ -82,7 +83,7 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
 ### Requisitos Previos
 
 - **Go 1.25.6** o superior
-- **Clave API de DeepSeek** (configurada en variables de entorno)
+- **Clave API de DeepSeek** (se configura dentro de la app)
 
 ### Configuración
 
@@ -93,25 +94,31 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
    cd zerocodex
    ```
 
-2. **Configurar API Key**:
-
+2. **Instalar dependencias del frontend**:
    ```bash
-   # Crear archivo .env o configurar variable de entorno
-   echo "DEEPSEEK_API_KEY=tu_api_key_aqui" > .env
+   cd frontend
+   npm install
+   cd ..
    ```
 
-3. **Construir y ejecutar**:
+3. **Ejecutar en desarrollo**:
    ```bash
-   go run cmd/app/main.go
+   wails dev
+   ```
+
+4. **Construir binario**:
+   ```bash
+   wails build
    ```
 
 ### Uso Básico
 
-1. **Iniciar la aplicación**: Ejecutar `go run cmd/app/main.go`
-2. **Seleccionar proyecto**: Usar el botón "Select Project" para elegir una carpeta
-3. **Escribir solicitud**: En el campo de texto, describir lo que quieres modificar
-4. **Enviar**: Presionar el botón "Enviar" o Ctrl+Enter
-5. **Revisar cambios**: Los cambios se aplican automáticamente y se muestran en el chat
+1. **Iniciar la aplicación**: Ejecutar `wails dev` o el binario generado
+2. **Configurar la API key**: Guardarla desde la pantalla inicial
+3. **Seleccionar proyecto**: Abrir la carpeta con el selector nativo de escritorio
+4. **Escribir solicitud**: En el campo de texto, describir lo que quieres modificar
+5. **Enviar**: Presionar el botón "Enviar" o `Ctrl+Enter`
+6. **Revisar cambios**: Los cambios se aplican automáticamente y se muestran en el chat
 
 ### Ejemplos de Solicitudes
 
@@ -125,10 +132,7 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
 
 ### Variables de Entorno
 
-| Variable            | Descripción                   | Requerido |
-| ------------------- | ----------------------------- | --------- |
-| `DEEPSEEK_API_KEY`  | API Key para DeepSeek AI      | Sí        |
-| `DEEPSEEK_BASE_URL` | URL base de la API (opcional) | No        |
+No son necesarias para el flujo principal. La API key se guarda en el llavero del sistema desde la interfaz.
 
 ### Almacenamiento
 
@@ -142,13 +146,16 @@ ZeroCodex sigue una arquitectura limpia con separación clara de responsabilidad
 
 ```
 zerocodex/
-├── cmd/app/main.go          # Punto de entrada principal
+├── main.go                 # Punto de entrada Wails
+├── app.go                  # Métodos Go expuestos al frontend
+├── frontend/               # UI Svelte/Vite
+├── wails.json              # Configuración Wails
 ├── internal/
 │   ├── adapters/           # Adaptadores concretos
 │   │   ├── filesystem/     # Operaciones de sistema de archivos
 │   │   ├── llm/           # Cliente DeepSeek
 │   │   ├── storage/       # Almacenamiento SQLite
-│   │   └── ui/            # Interfaz gráfica
+│   │   └── ui/            # UI Fyne anterior, ya no usada por defecto
 │   ├── application/        # Lógica de aplicación
 │   │   ├── chat.go        # Procesamiento de chat
 │   │   ├── project_intelligence.go # Análisis de proyectos
@@ -163,18 +170,18 @@ zerocodex/
 
 ### Dependencias Principales
 
-- **Fyne**: Framework para aplicaciones de escritorio en Go
-- **godotenv**: Manejo de variables de entorno desde archivos .env
+- **Wails**: Shell de escritorio y bindings Go <-> frontend
+- **Svelte + Vite**: Interfaz moderna y mantenible
 - **SQLite**: Base de datos embebida para persistencia
 
 ### Construir desde Fuente
 
 ```bash
-# Construir binario
-go build -o zerocodex cmd/app/main.go
+# Desarrollo
+wails dev
 
-# Ejecutar binario
-./zerocodex
+# Build de escritorio
+wails build
 ```
 
 ## 🤝 Contribuir
@@ -199,7 +206,6 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo LICENSE para más detal
 ## 🙏 Agradecimientos
 
 - **DeepSeek AI** por proporcionar la API de inteligencia artificial
-- **Fyne** por el excelente framework de UI para Go
 - **Comunidad Go** por las herramientas y bibliotecas de calidad
 
 ## 🖼️ Imágenes de la Aplicación

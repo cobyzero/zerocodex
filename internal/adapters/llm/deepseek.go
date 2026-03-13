@@ -11,7 +11,7 @@ func NewDeepSeekClient(apiKey string) *DeepSeekClient {
 }
 
 const (
-	deepSeekURL      = "https://api.deepseek.com/chat/completions"
-	deepSeekModel    = "deepseek-chat"
+	deepSeekURL       = "https://api.deepseek.com/chat/completions"
+	deepSeekModel     = "deepseek-reasoner"
 	maxToolIterations = 10
 )

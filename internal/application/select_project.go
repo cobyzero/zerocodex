@@ -35,3 +35,10 @@ func (s *SelectProject) ListSaved() ([]string, error) {
 	}
 	return s.Store.ListProjects()
 }
+
+func (s *SelectProject) RemoveSaved(path string) error {
+	if s.Store == nil {
+		return nil
+	}
+	return s.Store.RemoveProject(path)
+}

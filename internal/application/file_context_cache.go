@@ -10,7 +10,9 @@ import (
 const (
 	maxFilesToIndex        = 400
 	maxFileBytesForContext = 200 * 1024
-	maxSelectedContexts    = 16
+	maxSelectedContexts    = 8
+	maxCachedSectionChars  = 2200
+	maxContextLineChars    = 180
 )
 
 func (c *Chat) buildCachedContextSection(projectPath, prompt string, availableList []string) string {
@@ -18,12 +20,13 @@ func (c *Chat) buildCachedContextSection(projectPath, prompt string, availableLi
 		return ""
 	}
 
-	cacheByPath, _ := c.refreshFileContextCache(projectPath, availableList, nil)
 	projectType := detectProjectProfile(availableList).Type
-	candidates := pickRelevantFiles(availableList, prompt, projectType, maxSelectedContexts)
+	intent := detectTaskIntent(prompt)
+	candidates := pickRelevantFiles(availableList, prompt, projectType, intent, maxSelectedContexts)
 	if len(candidates) == 0 {
 		return ""
 	}
+	cacheByPath, _ := c.refreshFileContextCache(projectPath, candidates, nil)
 
 	var b strings.Builder
 	for _, p := range candidates {
@@ -31,13 +34,17 @@ func (c *Chat) buildCachedContextSection(projectPath, prompt string, availableLi
 		if ctx == "" {
 			continue
 		}
+		ctx = shorten(ctx, maxContextLineChars)
 		b.WriteString("- ")
 		b.WriteString(p)
 		b.WriteString(": ")
 		b.WriteString(ctx)
 		b.WriteString("\n")
+		if b.Len() >= maxCachedSectionChars {
+			break
+		}
 	}
-	return strings.TrimSpace(b.String())
+	return trimWithNotice(strings.TrimSpace(b.String()), maxCachedSectionChars, "\n...[truncated cached context]")
 }
 
 func (c *Chat) refreshFileContextCache(
@@ -125,7 +132,7 @@ func summarizeFileContext(path string, size int64, content string) string {
 	if hints == "" {
 		hints = "No major symbols detected."
 	}
-	return fmt.Sprintf("%s, %d lines. %s", fileKind(ext), lineCount, hints)
+	return fmt.Sprintf("%s, %d lines. %s", fileKind(ext), lineCount, shorten(hints, 140))
 }
 
 func fileKind(ext string) string {

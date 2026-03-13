@@ -13,5 +13,6 @@ type LLMClient interface {
 		prompt string,
 		readFunc func(string) string,
 		writeFunc func(path, content string) string,
+		runCommandFunc func(command string) string,
 	) (string, error)
 }

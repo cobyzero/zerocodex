@@ -2,6 +2,7 @@ package application
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -12,41 +13,48 @@ type projectProfile struct {
 	KeyFiles []string
 }
 
+const (
+	maxContextRules      = 3
+	maxContextKeyFiles   = 4
+	maxContextCandidates = 8
+	maxInventoryRoot     = 6
+	maxInventoryDirs     = 8
+)
+
 func buildAgentContext(filesListRaw, prompt string) string {
 	paths := parseListedFiles(filesListRaw)
+	intent := detectTaskIntent(prompt)
 	profile := detectProjectProfile(paths)
-	candidates := pickRelevantFiles(paths, prompt, profile.Type, 18)
+	candidates := pickRelevantFiles(paths, prompt, profile.Type, intent, maxContextCandidates)
 
 	var b strings.Builder
 	b.WriteString("Project Type: ")
 	b.WriteString(profile.Type)
-	b.WriteString("\n\n")
+	b.WriteByte('\n')
 
-	b.WriteString("Rules for this project type:\n")
-	for _, rule := range profile.Rules {
+	b.WriteString("Rules:\n")
+	for _, rule := range capStrings(profile.Rules, maxContextRules) {
 		b.WriteString("- ")
 		b.WriteString(rule)
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\nHigh-value project files:\n")
-	for _, p := range profile.KeyFiles {
-		b.WriteString("- ")
-		b.WriteString(p)
+	if len(profile.KeyFiles) > 0 {
+		b.WriteString("\nKey files:\n- ")
+		b.WriteString(strings.Join(capStrings(profile.KeyFiles, maxContextKeyFiles), ", "))
 		b.WriteString("\n")
 	}
 
 	if len(candidates) > 0 {
-		b.WriteString("\nBest candidate files for this request:\n")
-		for _, p := range candidates {
-			b.WriteString("- ")
-			b.WriteString(p)
-			b.WriteString("\n")
-		}
+		b.WriteString("\nCandidate files:\n- ")
+		b.WriteString(strings.Join(candidates, ", "))
+		b.WriteString("\n")
 	}
 
-	b.WriteString("\nProject files (full listing, possibly truncated):\n")
-	b.WriteString(filesListRaw)
+	if inventory := buildCompactInventory(paths); inventory != "" {
+		b.WriteString("\nInventory:\n")
+		b.WriteString(inventory)
+	}
 	return b.String()
 }
 
@@ -93,8 +101,9 @@ func detectProjectProfile(paths []string) projectProfile {
 				"Keep interfaces in domain/application layers and concrete code in adapters.",
 				"Prefer small focused functions; keep error handling explicit.",
 				"When changing behavior, update relevant tests or add missing ones.",
+				"Do not start with README unless the task is documentation or general project explanation.",
 			},
-			KeyFiles: existingFrom(paths, "go.mod", "cmd/app/main.go", "README.md"),
+			KeyFiles: existingFrom(paths, "go.mod", "cmd/app/main.go"),
 		}
 	case has("package.json"):
 		tp := "Node.js"
@@ -108,8 +117,9 @@ func detectProjectProfile(paths []string) projectProfile {
 				"Respect current framework conventions (routing, components, state, build tools).",
 				"Prefer updating files inside src/ unless project already uses root-level app structure.",
 				"Keep lint/format conventions and existing naming patterns.",
+				"Do not start with README unless the task is documentation or general project explanation.",
 			},
-			KeyFiles: existingFrom(paths, "package.json", "tsconfig.json", "README.md"),
+			KeyFiles: existingFrom(paths, "package.json", "tsconfig.json"),
 		}
 	case has("pyproject.toml") || has("requirements.txt"):
 		return projectProfile{
@@ -119,8 +129,9 @@ func detectProjectProfile(paths []string) projectProfile {
 				"Preserve virtual-env and dependency conventions in pyproject.toml/requirements.txt.",
 				"Keep business logic separated from transport layer (CLI/API/web).",
 				"Prefer focused test updates for changed behavior.",
+				"Do not start with README unless the task is documentation or general project explanation.",
 			},
-			KeyFiles: existingFrom(paths, "pyproject.toml", "requirements.txt", "README.md"),
+			KeyFiles: existingFrom(paths, "pyproject.toml", "requirements.txt"),
 		}
 	case has("cargo.toml"):
 		return projectProfile{
@@ -130,6 +141,7 @@ func detectProjectProfile(paths []string) projectProfile {
 				"Prefer compile-safe refactors and explicit error handling via Result.",
 				"Keep changes minimal in public API unless requested.",
 				"Update tests in mod tests or integration tests when behavior changes.",
+				"Do not start with README unless the task is documentation or general project explanation.",
 			},
 			KeyFiles: existingFrom(paths, "Cargo.toml", "src/main.rs", "src/lib.rs"),
 		}
@@ -142,7 +154,7 @@ func detectProjectProfile(paths []string) projectProfile {
 				"Prefer coherent, localized changes over broad refactors.",
 				"State assumptions when project conventions are unclear.",
 			},
-			KeyFiles: existingFrom(paths, "README.md"),
+			KeyFiles: existingFrom(paths),
 		}
 	}
 }
@@ -162,7 +174,7 @@ func existingFrom(paths []string, candidates ...string) []string {
 	return found
 }
 
-func pickRelevantFiles(paths []string, prompt, projectType string, limit int) []string {
+func pickRelevantFiles(paths []string, prompt, projectType string, intent taskIntent, limit int) []string {
 	type scored struct {
 		path  string
 		score int
@@ -174,7 +186,7 @@ func pickRelevantFiles(paths []string, prompt, projectType string, limit int) []
 
 	for _, p := range paths {
 		lp := strings.ToLower(p)
-		score := scoreByProjectType(lp, projectType) + scoreByPromptHints(lp, prompt)
+		score := scoreByProjectType(lp, projectType, intent) + scoreByPromptHints(lp, prompt, intent)
 		for _, token := range tokens {
 			if len(token) < 3 {
 				continue
@@ -206,7 +218,61 @@ func pickRelevantFiles(paths []string, prompt, projectType string, limit int) []
 	return out
 }
 
-func scoreByProjectType(path, projectType string) int {
+func buildCompactInventory(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	topDirCounts := map[string]int{}
+	rootFiles := []string{}
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		parts := strings.Split(path, "/")
+		if len(parts) == 1 {
+			rootFiles = append(rootFiles, path)
+			continue
+		}
+		topDirCounts[parts[0]]++
+	}
+
+	rootFiles = capStrings(rootFiles, maxInventoryRoot)
+	type dirCount struct {
+		name  string
+		count int
+	}
+	dirs := make([]dirCount, 0, len(topDirCounts))
+	for name, count := range topDirCounts {
+		dirs = append(dirs, dirCount{name: name, count: count})
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		if dirs[i].count == dirs[j].count {
+			return dirs[i].name < dirs[j].name
+		}
+		return dirs[i].count > dirs[j].count
+	})
+	if len(dirs) > maxInventoryDirs {
+		dirs = dirs[:maxInventoryDirs]
+	}
+
+	var b strings.Builder
+	if len(rootFiles) > 0 {
+		b.WriteString("- root files: ")
+		b.WriteString(strings.Join(rootFiles, ", "))
+		b.WriteString("\n")
+	}
+	for _, item := range dirs {
+		b.WriteString("- ")
+		b.WriteString(item.name)
+		b.WriteString("/: ")
+		b.WriteString(strconv.Itoa(item.count))
+		b.WriteString(" files\n")
+	}
+	return b.String()
+}
+
+func scoreByProjectType(path, projectType string, intent taskIntent) int {
 	switch projectType {
 	case "Go":
 		switch {
@@ -218,8 +284,8 @@ func scoreByProjectType(path, projectType string) int {
 			return 5
 		case strings.HasSuffix(path, ".go"):
 			return 4
-		case strings.Contains(path, "readme"):
-			return 2
+		case isReadmePath(path):
+			return readmeScore(intent)
 		}
 	case "Flutter/Dart":
 		switch {
@@ -229,6 +295,8 @@ func scoreByProjectType(path, projectType string) int {
 			return 6
 		case strings.HasSuffix(path, ".dart"):
 			return 5
+		case isReadmePath(path):
+			return readmeScore(intent)
 		case strings.Contains(path, "test"):
 			return 3
 		}
@@ -242,6 +310,8 @@ func scoreByProjectType(path, projectType string) int {
 			return 5
 		case strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".tsx") || strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".jsx"):
 			return 4
+		case isReadmePath(path):
+			return readmeScore(intent)
 		}
 	case "Python":
 		switch {
@@ -249,6 +319,8 @@ func scoreByProjectType(path, projectType string) int {
 			return 8
 		case strings.HasSuffix(path, ".py"):
 			return 5
+		case isReadmePath(path):
+			return readmeScore(intent)
 		case strings.Contains(path, "tests"):
 			return 3
 		}
@@ -260,17 +332,22 @@ func scoreByProjectType(path, projectType string) int {
 			return 6
 		case strings.HasSuffix(path, ".rs"):
 			return 5
+		case isReadmePath(path):
+			return readmeScore(intent)
 		}
 	}
 
-	if strings.Contains(path, "readme") {
-		return 2
+	if isReadmePath(path) {
+		return readmeScore(intent)
 	}
 	return 0
 }
 
-func scoreByPromptHints(path, prompt string) int {
+func scoreByPromptHints(path, prompt string, intent taskIntent) int {
 	score := 0
+	if intent == intentDocumentation && isReadmePath(path) {
+		score += 8
+	}
 	if strings.Contains(prompt, "test") && (strings.Contains(path, "test") || strings.Contains(path, "_test")) {
 		score += 4
 	}
@@ -289,7 +366,62 @@ func scoreByPromptHints(path, prompt string) int {
 			score += 3
 		}
 	}
+	if intent == intentImplementation || intent == intentBugfix {
+		if isReadmePath(path) {
+			score -= 6
+		}
+	}
 	return score
+}
+
+type taskIntent string
+
+const (
+	intentGeneric        taskIntent = "generic"
+	intentDocumentation  taskIntent = "documentation"
+	intentImplementation taskIntent = "implementation"
+	intentBugfix         taskIntent = "bugfix"
+	intentUI             taskIntent = "ui"
+)
+
+func detectTaskIntent(prompt string) taskIntent {
+	prompt = strings.ToLower(prompt)
+	switch {
+	case hasAny(prompt, "readme", "documenta", "documentar", "document", "documentation", "docs", "explica el proyecto", "como funciona el proyecto"):
+		return intentDocumentation
+	case hasAny(prompt, "fix", "bug", "error", "falla", "arregla", "corrige"):
+		return intentBugfix
+	case hasAny(prompt, "ui", "interfaz", "estilo", "diseño", "design"):
+		return intentUI
+	case hasAny(prompt, "implement", "modifica", "actualiza", "edita", "crear", "crea", "rewrite", "write", "refactor"):
+		return intentImplementation
+	default:
+		return intentGeneric
+	}
+}
+
+func hasAny(s string, values ...string) bool {
+	for _, v := range values {
+		if strings.Contains(s, v) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReadmePath(path string) bool {
+	return strings.Contains(path, "readme")
+}
+
+func readmeScore(intent taskIntent) int {
+	switch intent {
+	case intentDocumentation:
+		return 8
+	case intentGeneric:
+		return 1
+	default:
+		return -4
+	}
 }
 
 func tokenize(s string) []string {
@@ -302,4 +434,11 @@ func tokenize(s string) []string {
 		}
 	}
 	return strings.Fields(b.String())
+}
+
+func capStrings(values []string, limit int) []string {
+	if len(values) <= limit {
+		return values
+	}
+	return values[:limit]
 }

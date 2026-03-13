@@ -28,3 +28,11 @@ func (s *KeyringStore) LoadDeepSeekAPIKey() (string, error) {
 	}
 	return secret, err
 }
+
+func (s *KeyringStore) DeleteDeepSeekAPIKey() error {
+	err := keyring.Delete(serviceName, deepSeekUserID)
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	return err
+}

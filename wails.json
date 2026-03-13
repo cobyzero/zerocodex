@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "zerocodex",
+  "outputfilename": "zerocodex",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Sebastian Abal Salazar",
+    "email": "115430199+cobyzero@users.noreply.github.com"
+  }
+}

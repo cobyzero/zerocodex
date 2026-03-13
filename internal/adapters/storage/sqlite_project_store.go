@@ -76,6 +76,14 @@ ORDER BY last_used_at DESC;
 	return projects, nil
 }
 
+func (s *SQLiteProjectStore) RemoveProject(path string) error {
+	_, err := s.db.Exec(`
+DELETE FROM projects
+WHERE path = ?;
+`, path)
+	return err
+}
+
 func (s *SQLiteProjectStore) Close() error {
 	return s.db.Close()
 }

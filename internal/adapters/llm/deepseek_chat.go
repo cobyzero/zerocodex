@@ -11,9 +11,10 @@ func (c *DeepSeekClient) Chat(
 	prompt string,
 	readFunc func(string) string,
 	writeFunc func(path, content string) string,
+	runCommandFunc func(command string) string,
 ) (string, error) {
 	if c.APIKey == "" {
-		return "", fmt.Errorf("DEEPSEEK_API_KEY environment variable not set")
+		return "", fmt.Errorf("deepseek api key is not configured")
 	}
 
 	messages := []Message{
@@ -42,10 +43,10 @@ func (c *DeepSeekClient) Chat(
 				})
 				continue
 			}
-			return respMessage.Content, nil
+			return sanitizeAssistantContent(respMessage.Content), nil
 		}
 
-		invalidPathCount, writeOKCount := c.executeToolCalls(&messages, respMessage.ToolCalls, readFunc, writeFunc)
+		invalidPathCount, writeOKCount := c.executeToolCalls(&messages, respMessage.ToolCalls, readFunc, writeFunc, runCommandFunc)
 		if writeOKCount > 0 {
 			hasWritten = true
 		}
@@ -68,7 +69,7 @@ func (c *DeepSeekClient) Chat(
 	if err != nil {
 		return "", err
 	}
-	return respMessage.Content, nil
+	return sanitizeAssistantContent(respMessage.Content), nil
 }
 
 func (c *DeepSeekClient) executeToolCalls(
@@ -76,6 +77,7 @@ func (c *DeepSeekClient) executeToolCalls(
 	toolCalls []ToolCall,
 	readFunc func(string) string,
 	writeFunc func(path, content string) string,
+	runCommandFunc func(command string) string,
 ) (invalidPathCount, writeOKCount int) {
 	invalidPathCount = 0
 	writeOKCount = 0
@@ -110,6 +112,16 @@ func (c *DeepSeekClient) executeToolCalls(
 			if strings.HasPrefix(toolContent, "WRITE_OK:") {
 				writeOKCount++
 			}
+
+		case "run_command":
+			var args struct {
+				Command string `json:"command"`
+			}
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				toolContent = "Error parsing arguments"
+				break
+			}
+			toolContent = runCommandFunc(args.Command)
 
 		default:
 			toolContent = "Unsupported tool: " + tc.Function.Name

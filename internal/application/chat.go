@@ -1,20 +1,29 @@
 package application
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cobyzero/zerocodex/internal/domain"
 )
 
 const (
-	maxContextChars  = 12000
-	maxToolReadChars = 20000
+	maxContextChars    = 8500
+	maxToolReadChars   = 12000
+	maxToolExecChars   = 12000
+	maxHistoryChars    = 1600
+	maxHistoryItems    = 5
+	maxHistoryEntry    = 140
+	toolCommandTimeout = 4 * time.Minute
 )
 
 var lineRangePattern = regexp.MustCompile(`^(.*)#L(\d+)-L(\d+)$`)
@@ -23,6 +32,11 @@ type Chat struct {
 	Repo         domain.ProjectRepository
 	Client       domain.LLMClient
 	ContextStore domain.FileContextStore
+	HistoryStore domain.ChatHistoryStore
+}
+
+type projectRangeReader interface {
+	ReadFileRange(basePath, relPath string, startLine, endLine int) (string, error)
 }
 
 func (c *Chat) AnalyzeProject(projectPath string, onProgress func(done, total int)) error {
@@ -39,6 +53,7 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 	var context string
 	availableFiles := map[string]string{}
 	availableList := []string{}
+	readCache := map[string]string{}
 	if projectPath != "" {
 		files := c.Repo.ListFiles(projectPath)
 		availableList = parseListedFiles(files)
@@ -51,15 +66,25 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 		if cacheSection := c.buildCachedContextSection(projectPath, prompt, availableList); cacheSection != "" {
 			context = context + "\n\nCached file context (local, auto-maintained):\n" + cacheSection
 		}
+		if historySection := c.buildHistoryContextSection(projectPath); historySection != "" {
+			context = context + "\n\nRecent chat history for this project:\n" + historySection
+		}
 		context = trimWithNotice(context, maxContextChars, "\n...[truncated context]")
 	}
 
-	return c.Client.Chat(
+	if c.HistoryStore != nil && strings.TrimSpace(projectPath) != "" && strings.TrimSpace(prompt) != "" {
+		_ = c.HistoryStore.Append(projectPath, "user", prompt)
+	}
+
+	response, err := c.Client.Chat(
 		context,
 		prompt,
 		func(file string) string {
 			if onTool != nil {
 				onTool("Reading file: " + file)
+			}
+			if _, ok := readCache[file]; ok {
+				return "ALREADY_PROVIDED: " + file + "\nUse the previous tool result for this file/range."
 			}
 			path, startLine, endLine := parseFileRange(file)
 			resolvedPath, ok, invalidMessage := resolveExistingPath(path, availableFiles, availableList)
@@ -67,14 +92,25 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 				return invalidMessage
 			}
 
-			content, err := c.Repo.ReadFile(projectPath, resolvedPath)
+			var content string
+			var err error
+			if startLine > 0 && endLine >= startLine {
+				if rr, ok := c.Repo.(projectRangeReader); ok {
+					content, err = rr.ReadFileRange(projectPath, resolvedPath, startLine, endLine)
+				} else {
+					content, err = c.Repo.ReadFile(projectPath, resolvedPath)
+					if err == nil {
+						content = sliceLines(content, startLine, endLine)
+					}
+				}
+			} else {
+				content, err = c.Repo.ReadFile(projectPath, resolvedPath)
+			}
 			if err != nil {
 				return "Error reading file: " + err.Error()
 			}
-			if startLine > 0 && endLine >= startLine {
-				content = sliceLines(content, startLine, endLine)
-			}
 			content = trimWithNotice(content, maxToolReadChars, "\n...[truncated file content]")
+			readCache[file] = content
 			return content
 		},
 		func(path, content string) string {
@@ -90,7 +126,74 @@ func (c *Chat) Execute(projectPath, prompt string, onTool func(string)) (string,
 			}
 			return "WRITE_OK: " + resolvedPath
 		},
+		func(command string) string {
+			if onTool != nil {
+				onTool("Running command: " + strings.TrimSpace(command))
+			}
+			return executeProjectCommand(projectPath, command)
+		},
 	)
+	if err != nil {
+		if c.HistoryStore != nil && strings.TrimSpace(projectPath) != "" {
+			_ = c.HistoryStore.Append(projectPath, "error", err.Error())
+		}
+		return "", err
+	}
+	if c.HistoryStore != nil && strings.TrimSpace(projectPath) != "" && strings.TrimSpace(response) != "" {
+		_ = c.HistoryStore.Append(projectPath, "assistant", response)
+	}
+	return response, nil
+}
+
+func executeProjectCommand(projectPath, command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "COMMAND_ERROR: empty command"
+	}
+	if strings.TrimSpace(projectPath) == "" {
+		return "COMMAND_ERROR: no project selected"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), toolCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	cmd.Dir = projectPath
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+	errOut := strings.TrimSpace(stderr.String())
+
+	var b strings.Builder
+	if err == nil {
+		b.WriteString("COMMAND_OK\n")
+	} else if ctx.Err() == context.DeadlineExceeded {
+		b.WriteString("COMMAND_TIMEOUT: exceeded ")
+		b.WriteString(toolCommandTimeout.String())
+		b.WriteString("\n")
+	} else {
+		b.WriteString("COMMAND_ERROR: ")
+		b.WriteString(err.Error())
+		b.WriteString("\n")
+	}
+
+	if out != "" {
+		b.WriteString("stdout:\n")
+		b.WriteString(out)
+		b.WriteString("\n")
+	}
+	if errOut != "" {
+		b.WriteString("stderr:\n")
+		b.WriteString(errOut)
+		b.WriteString("\n")
+	}
+
+	return trimWithNotice(strings.TrimSpace(b.String()), maxToolExecChars, "\n...[truncated command output]")
 }
 
 func parseFileRange(raw string) (path string, startLine, endLine int) {
@@ -233,4 +336,68 @@ func resolveWritablePath(path, basePath string, availableFiles map[string]string
 
 	// Allow creating new files inside the selected project.
 	return clean, true, ""
+}
+
+func (c *Chat) LoadProjectTranscript(projectPath string) string {
+	if c.HistoryStore == nil || strings.TrimSpace(projectPath) == "" {
+		return ""
+	}
+	entries, err := c.HistoryStore.ListRecent(projectPath, 100)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, entry := range entries {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		switch entry.Role {
+		case "user":
+			b.WriteString("#### You\n\n> ")
+			b.WriteString(strings.TrimSpace(entry.Content))
+		case "assistant":
+			b.WriteString("#### ZeroCodex\n\n")
+			b.WriteString(strings.TrimSpace(entry.Content))
+		case "error":
+			b.WriteString("`Error` ")
+			b.WriteString(strings.TrimSpace(entry.Content))
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (c *Chat) buildHistoryContextSection(projectPath string) string {
+	if c.HistoryStore == nil || strings.TrimSpace(projectPath) == "" {
+		return ""
+	}
+	entries, err := c.HistoryStore.ListRecent(projectPath, maxHistoryItems)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, entry := range entries {
+		role := entry.Role
+		if entry.Role == "assistant" {
+			role = "Assistant"
+		} else if entry.Role == "user" {
+			role = "User"
+		} else if entry.Role == "error" {
+			role = "Error"
+		}
+		b.WriteString("- ")
+		b.WriteString(role)
+		b.WriteString(": ")
+		b.WriteString(trimWithNotice(strings.TrimSpace(entry.Content), maxHistoryEntry, "..."))
+		b.WriteString("\n")
+	}
+	return trimWithNotice(strings.TrimSpace(b.String()), maxHistoryChars, "\n...[truncated history]")
+}
+
+func (c *Chat) ClearProjectHistory(projectPath string) error {
+	if c.HistoryStore == nil || strings.TrimSpace(projectPath) == "" {
+		return nil
+	}
+	return c.HistoryStore.Clear(projectPath)
 }
